@@ -10,7 +10,7 @@ from scipy.stats import norm
 LANG_DICT = {
     "简体中文": {
         "nav_label": "功能导航",
-        "nav_vol": "TQQQ 波动看板",
+        "nav_vol": "期权波动看板",
         "nav_idx": "指数新低分析",
         "settings": "参数设置",
         "run_btn": "运行分析",
@@ -43,7 +43,7 @@ LANG_DICT = {
     },
     "English": {
         "nav_label": "Navigation",
-        "nav_vol": "TQQQ Dashboard",
+        "nav_vol": "Option Dashboard",
         "nav_idx": "Index New Low Analysis",
         "settings": "Settings",
         "run_btn": "Run Analysis",
@@ -76,7 +76,7 @@ LANG_DICT = {
     },
     "日本語": {
         "nav_label": "ナビゲーション",
-        "nav_vol": "TQQQ ボラティリティ看板",
+        "nav_vol": "オプション ボラティリティ看板",
         "nav_idx": "指数新安値分析",
         "settings": "パラメータ設定",
         "run_btn": "分析実行",
