@@ -58,7 +58,7 @@ def run_analysis():
             <b>策略建议：</b> 建议使用 <b>{suggested_s}σ</b> | <b>备注：</b> {advice}
         </p>
     </div>
-    """, unsafe_allow_supported_markup=True)
+    """, unsafe_allow_html=True)
 
     # 4. 绘图 (Streamlit 渲染 Matplotlib)
     fig, ax = plt.subplots(figsize=(12, 6))
