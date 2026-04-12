@@ -129,7 +129,6 @@ if app_mode == L["nav_vol"]:
         st.header(L["settings"])
         ticker_symbol = st.text_input("Ticker Symbol", value="TQQQ").upper()
         confidence_level = st.slider("Confidence Level (%)", 80, 99, 95)
-        # 默认 sigma 将由 IV 强度自动推荐，但用户仍可手动调整
         sigma_multiplier = st.slider("Manual Sigma Multiplier", 1.0, 4.0, 2.0, 0.1)
         lookback_period = st.selectbox("Lookback Period", ["1y", "2y", "5y", "10y", "max"], index=3)
         run_v = st.button(L["run_btn"], key="run_v")
@@ -147,38 +146,28 @@ if app_mode == L["nav_vol"]:
             std_dev = weekly_returns.std()
             mean_ret = weekly_returns.mean()
             
-            # --- 核心波动率算法切换 ---
+            # --- 统一核心波动率逻辑 ---
             iv = 0
-            vol_source = "Historical"
+            vol_source = ""
 
-            # 1. 针对 TQQQ 优先尝试 VXN
-            if ticker_symbol == "TQQQ":
-                try:
-                    vxn_data = yf.Ticker("^VXN").history(period="1d")
-                    if not vxn_data.empty:
-                        iv = vxn_data['Close'].iloc[-1] / 100
-                        vol_source = "VXN Index"
-                except:
-                    pass
+            # 1. 优先：尝试实时隐含波动率 (IV)
+            try:
+                options = tq.options
+                if options:
+                    opt_chain = tq.option_chain(options[0])
+                    calls_puts = opt_chain.puts
+                    # 获取最接近平价(ATM)的 Put 隐含波动率
+                    iv = calls_puts.iloc[(calls_puts['strike'] - current_price).abs().argsort()[:1]]['impliedVolatility'].iloc[0]
+                    vol_source = "Real-time IV"
+            except:
+                iv = 0
 
-            # 2. 通用：尝试实时隐含波动率 (IV)
-            if iv == 0:
-                try:
-                    options = tq.options
-                    if options:
-                        opt_chain = tq.option_chain(options[0])
-                        calls_puts = opt_chain.puts
-                        iv = calls_puts.iloc[(calls_puts['strike'] - current_price).abs().argsort()[:1]]['impliedVolatility'].iloc[0]
-                        vol_source = "Real-time IV"
-                except:
-                    iv = 0
-
-            # 3. 保底：历史波动率 (HV)
+            # 2. 备选：若 IV 获取失败则使用年化历史波动率 (HV)
             if iv == 0:
                 iv = std_dev * np.sqrt(52)
                 vol_source = "Historical Vol"
 
-            # --- 针对 IV% 重新设计的 Sigma 倍数建议逻辑 ---
+            # --- 风险等级与自动 Sigma 建议逻辑 ---
             def get_risk_config(vol_val):
                 ref_v = vol_val * 100
                 if ref_v < 20: 
@@ -192,8 +181,8 @@ if app_mode == L["nav_vol"]:
 
             bg_color, status_text, auto_sigma, advice = get_risk_config(iv)
             
-            # 提示用户当前使用的是自动推荐的 Sigma 还是手动 Sigma
-            effective_sigma = sigma_multiplier if "Manual Sigma Multiplier" in st.session_state else auto_sigma
+            # 使用手动设置的 Sigma
+            effective_sigma = sigma_multiplier
 
             st.markdown(f"""
                 <div style='background-color:{bg_color};color:white;padding:15px;border-radius:8px;'>
