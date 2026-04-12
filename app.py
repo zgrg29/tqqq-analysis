@@ -28,7 +28,7 @@ LANG_DICT = {
         "logic_ref": "逻辑参考",
         "prob_drop": "跌破概率(IV)",
         "prob_break": "突破概率(IV)",
-        "risk_level_title": "VXN 风险等级",
+        "risk_level_title": "市场波动等级",
         "current_price": "当前价",
         "vol_weekly": "周σ",
         "hist_support": "历史概率支撑",
@@ -61,7 +61,7 @@ LANG_DICT = {
         "logic_ref": "Logic",
         "prob_drop": "Prob. Drop(IV)",
         "prob_break": "Prob. Break(IV)",
-        "risk_level_title": "VXN Risk Level",
+        "risk_level_title": "Market Vol Level",
         "current_price": "Price",
         "vol_weekly": "Weekly σ",
         "hist_support": "Hist. Support",
@@ -94,7 +94,7 @@ LANG_DICT = {
         "logic_ref": "根拠",
         "prob_drop": "下落確率(IV)",
         "prob_break": "上昇確率(IV)",
-        "risk_level_title": "VXN リスクレベル",
+        "risk_level_title": "市場ボラレベル",
         "current_price": "現在値",
         "vol_weekly": "週間σ",
         "hist_support": "歴史的サポート",
@@ -122,12 +122,12 @@ with st.sidebar:
     app_mode = st.radio(L["nav_label"], nav_options, index=st.session_state.current_nav_index)
     st.session_state.current_nav_index = nav_options.index(app_mode)
 
-# --- 3. 核心功能 A: TQQQ 波动看板 (修复多语言显示) ---
+# --- 3. 核心功能 A: 股票/ETF 波动看板 ---
 if app_mode == L["nav_vol"]:
     st.title(f"🚀 {L['nav_vol']}")
     with st.sidebar:
         st.header(L["settings"])
-        ticker_symbol = st.text_input("Ticker Symbol", value="TQQQ")
+        ticker_symbol = st.text_input("Ticker Symbol", value="TQQQ").upper()
         confidence_level = st.slider("Confidence Level (%)", 80, 99, 95)
         sigma_multiplier = st.slider("Sigma Multiplier", 1.0, 4.0, 2.0, 0.1)
         lookback_period = st.selectbox("Lookback Period", ["1y", "2y", "5y", "10y", "max"], index=3)
@@ -135,53 +135,84 @@ if app_mode == L["nav_vol"]:
 
     if run_v or ticker_symbol:
         tq = yf.Ticker(ticker_symbol)
-        vxn_data = yf.Ticker("^VXN").history(period="1d")
-        current_vxn = vxn_data['Close'].iloc[-1] if not vxn_data.empty else 0
         hist = tq.history(period=lookback_period)
 
         if len(hist) < 20:
             st.error(L["data_error"])
         else:
-            high_low = hist['High'] - hist['Low']
-            true_range = np.maximum(high_low, np.abs(hist['High'] - hist['Close'].shift()))
-            current_atr = true_range.rolling(14).mean().iloc[-1]
+            # 基础数据准备
+            current_price = hist['Close'].iloc[-1]
             weekly_resample = hist.resample('W-MON').agg({'Open': 'first', 'Close': 'last'}).dropna()
             weekly_returns = (weekly_resample['Close'] - weekly_resample['Open']) / weekly_resample['Open']
-            current_price = hist['Close'].iloc[-1]
             std_dev = weekly_returns.std()
             mean_ret = weekly_returns.mean()
+            
+            # 1. 核心波动率逻辑切换
+            iv = 0
+            vol_source = "Historical"
 
-            # 绘图
+            # 针对 TQQQ 优先尝试 VXN
+            if ticker_symbol == "TQQQ":
+                try:
+                    vxn_data = yf.Ticker("^VXN").history(period="1d")
+                    if not vxn_data.empty:
+                        iv = vxn_data['Close'].iloc[-1] / 100
+                        vol_source = "VXN Index"
+                except:
+                    pass
+
+            # 如果不是 TQQQ，或 VXN 获取失败，则尝试实时隐含波动率 (IV)
+            if iv == 0:
+                try:
+                    options = tq.options
+                    if options:
+                        opt_chain = tq.option_chain(options[0])
+                        # 获取最接近平价的 Put IV
+                        calls_puts = opt_chain.puts
+                        iv = calls_puts.iloc[(calls_puts['strike'] - current_price).abs().argsort()[:1]]['impliedVolatility'].iloc[0]
+                        vol_source = "Real-time IV"
+                except:
+                    iv = 0
+
+            # 如果上述都失败或返回0，使用历史波动率 (年化)
+            if iv == 0:
+                iv = std_dev * np.sqrt(52)
+                vol_source = "Historical Vol"
+
+            # 风险等级映射 (基于最终 IV 值反推一个参考点)
+            def get_risk_config(vol_val):
+                ref_v = vol_val * 100
+                if ref_v < 30: return "#2e7d32", "Safe", "低波动 / Low Vol"
+                if ref_v < 50: return "#fbc02d", "Caution", "标准波动 / Standard"
+                if ref_v < 70: return "#fb8c00", "Warning", "高波动 / High Vol"
+                return "#d32f2f", "CRISIS", "极高波动 / Extreme Vol"
+
+            bg_color, status_text, advice = get_risk_config(iv)
+            st.markdown(f"<div style='background-color:{bg_color};color:white;padding:15px;border-radius:8px;'><h2>{L['risk_level_title']}: {status_text} ({iv:.2%})</h2><p>Source: {vol_source} | {advice}</p></div>", unsafe_allow_html=True)
+
+            # 绘图部分
             fig1, ax = plt.subplots(figsize=(12, 6))
             sns.histplot(weekly_returns, kde=True, bins=40, color="#8884d8", stat="density", alpha=0.3, ax=ax)
             lower_q, upper_q = weekly_returns.quantile([(100 - confidence_level) / 100, confidence_level / 100])
             l_sigma, u_sigma = mean_ret - sigma_multiplier * std_dev, mean_ret + sigma_multiplier * std_dev
-            y_limit = ax.get_ylim()[1]
-            for val, col, lbl in [(l_sigma, 'red', f'-{sigma_multiplier}σ'), (lower_q, 'green', 'Q_low'), (upper_q, 'blue', 'Q_high'), (u_sigma, 'red', f'+{sigma_multiplier}σ')]:
+            for val, col in [(l_sigma, 'red'), (lower_q, 'green'), (upper_q, 'blue'), (u_sigma, 'red')]:
                 ax.axvline(val, color=col, linestyle='--', lw=2)
             st.pyplot(fig1)
 
-            def get_risk_config(vxn):
-                if vxn < 20: return "#2e7d32", "Safe", 1.5, "低波动环境 / Low Vol / 低ボラティリティ"
-                if vxn < 25: return "#fbc02d", "Caution", 2.0, "标准波动 / Standard / 標準ボラティリティ"
-                if vxn < 30: return "#fb8c00", "Warning", 2.5, "高波动 / Warning / 高ボラティリティ"
-                return "#d32f2f", "CRISIS", 3.0, "恐慌 / Crisis / パニック"
-
-            bg_color, status_text, suggested_s, advice = get_risk_config(current_vxn)
-            st.markdown(f"<div style='background-color:{bg_color};color:white;padding:15px;border-radius:8px;'><h2>{L['risk_level_title']}: {status_text} ({current_vxn:.2f})</h2><p>{advice}</p></div>", unsafe_allow_html=True)
-
-            try:
-                iv = tq.option_chain(tq.options[0]).puts.iloc[(tq.option_chain(tq.options[0]).puts['strike'] - current_price).abs().argsort()[:1]]['impliedVolatility'].iloc[0]
-            except:
-                iv = std_dev * np.sqrt(52)
-            
+            # 概率计算逻辑
             def calc_prob(target_p, direction='down'):
-                t = 5 / 365
+                t = 5 / 365 # 预测未来一周
+                if iv <= 0: return 0.5
                 d2 = (np.log(current_price / target_p) + (- 0.5 * iv**2) * t) / (iv * np.sqrt(t))
                 return norm.cdf(-d2) if direction == 'down' else (1 - norm.cdf(-d2))
 
+            # ATR 支撑
+            high_low = hist['High'] - hist['Low']
+            true_range = np.maximum(high_low, np.abs(hist['High'] - hist['Close'].shift()))
+            current_atr = true_range.rolling(14).mean().iloc[-1]
             atr_buf = current_atr * np.sqrt(5) * 1.5
-            st.write(f"💎 {ticker_symbol} | {L['current_price']}: ${current_price:.2f} | {L['vol_weekly']}: {std_dev:.2%} | IV: {iv:.2%}")
+
+            st.write(f"💎 {ticker_symbol} | {L['current_price']}: ${current_price:.2f} | {L['vol_weekly']}: {std_dev:.2%} | Calc-IV: {iv:.2%}")
             
             # 支撑表格
             df_buy = pd.DataFrame([
@@ -201,7 +232,7 @@ if app_mode == L["nav_vol"]:
             df_sell[L["prob_break"]] = df_sell[L["suggested_price"]].apply(lambda x: f"{calc_prob(x, 'up'):.2%}")
             st.table(df_sell.style.format({L["suggested_price"]: "${:.2f}"}))
 
-# --- 4. 核心功能 B: 指数分析 (修复丢失的红点点) ---
+# --- 4. 核心功能 B: 指数分析 (不修改任何相关逻辑) ---
 elif app_mode == L["nav_idx"]:
     st.title(f"📉 {L['nav_idx']}")
     symbol_map = {"纳斯达克100 (NDX)": "^NDX", "标普500 (S&P 500)": "^GSPC", "恒生指数 (HSI)": "^HSI", "沪深300 (CSI 300)": "000300.SS", "日经225 (Nikkei 225)": "^N225", "德国DAX (DAX)": "^GDAXI", "英国富时100 (FTSE 100)": "^FTSE", "韩国综合指数 (KOSPI)": "^KS11"}
@@ -235,13 +266,11 @@ elif app_mode == L["nav_idx"]:
                                 confirmed_rebound_dates.append(close.index[target_idx])
                 except: continue
 
-            # 绘图：补回红点 (scatter)
             fig2, (ax1, ax2) = plt.subplots(2, 1, figsize=(16, 10), sharex=True, gridspec_kw={'height_ratios': [3, 1]})
             ax1.plot(close.index, close.values, label='Price', color='#1f77b4', alpha=0.4, zorder=1)
             for i, date in enumerate(confirmed_rebound_dates):
                 ax1.axvline(x=date, color='#00FF00', linestyle='--', alpha=0.8, linewidth=1.5, label="Bottom Confirmed" if i == 0 else "", zorder=2)
             
-            # --- 补回的红点逻辑 ---
             low_points = close[is_new_low]
             if not low_points.empty:
                 ax1.scatter(low_points.index, low_points.values, color='red', label=f'{lookback_weeks}-Week New Low', s=15, zorder=3)
