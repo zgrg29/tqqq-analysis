@@ -94,7 +94,7 @@ LANG_DICT = {
         "logic_ref": "根拠",
         "prob_drop": "下落確率(IV)",
         "prob_break": "上昇確率(IV)",
-        "risk_level_title": "リアルタイムボラ強度",
+        "risk_level_title": "リアルタイムボラ强度",
         "current_price": "現在値",
         "vol_weekly": "週間σ",
         "hist_support": "歴史的サポート",
@@ -127,7 +127,17 @@ if app_mode == L["nav_vol"]:
     st.title(f"🚀 {L['nav_vol']}")
     with st.sidebar:
         st.header(L["settings"])
-        ticker_symbol = st.text_input("Ticker Symbol", value="TQQQ").upper()
+        
+        # --- 修改部分：增加 SOXL 下拉及手动输入 ---
+        ticker_options = ["TQQQ", "SOXL", "Custom"]
+        selected_option = st.selectbox("Select Ticker", options=ticker_options, index=0)
+        
+        if selected_option == "Custom":
+            ticker_symbol = st.text_input("Enter Custom Symbol", value="NVDA").upper()
+        else:
+            ticker_symbol = selected_option
+        # --- 修改结束 ---
+
         confidence_level = st.slider("Confidence Level (%)", 80, 99, 95)
         sigma_multiplier = st.slider("Manual Sigma Multiplier", 1.0, 4.0, 2.0, 0.1)
         lookback_period = st.selectbox("Lookback Period", ["1y", "2y", "5y", "10y", "max"], index=3)
@@ -156,32 +166,29 @@ if app_mode == L["nav_vol"]:
                 if options:
                     opt_chain = tq.option_chain(options[0])
                     calls_puts = opt_chain.puts
-                    # 获取最接近平价(ATM)的 Put 隐含波动率
                     iv = calls_puts.iloc[(calls_puts['strike'] - current_price).abs().argsort()[:1]]['impliedVolatility'].iloc[0]
                     vol_source = "Real-time IV"
             except:
                 iv = 0
 
-            # 2. 备选：若 IV 获取失败则使用年化历史波动率 (HV)
+            # 2. 备选：历史波动率 (HV)
             if iv == 0:
                 iv = std_dev * np.sqrt(52)
                 vol_source = "Historical Vol"
 
-            # --- 风险等级与自动 Sigma 建议逻辑 ---
+            # --- 风险等级逻辑 ---
             def get_risk_config(vol_val):
                 ref_v = vol_val * 100
                 if ref_v < 20: 
-                    return "#2e7d32", "Low Vol", 1.5, "极低波动：市场非常平稳 / Calm Market"
+                    return "#2e7d32", "Low Vol", 1.5, "极低波动 / Calm Market"
                 elif ref_v < 40: 
-                    return "#fbc02d", "Standard", 2.0, "标准波动：正常个股/ETF水平 / Normal Range"
+                    return "#fbc02d", "Standard", 2.0, "标准波动 / Normal Range"
                 elif ref_v < 70: 
-                    return "#fb8c00", "High Vol", 2.8, "高波动：杠杆ETF或剧烈震荡 / Aggressive Move"
+                    return "#fb8c00", "High Vol", 2.8, "高波动 / Aggressive Move"
                 else: 
-                    return "#d32f2f", "EXTREME", 3.5, "极端波动：高度恐慌或异常行情 / Crisis Mode"
+                    return "#d32f2f", "EXTREME", 3.5, "极端波动 / Crisis Mode"
 
             bg_color, status_text, auto_sigma, advice = get_risk_config(iv)
-            
-            # 使用手动设置的 Sigma
             effective_sigma = sigma_multiplier
 
             st.markdown(f"""
