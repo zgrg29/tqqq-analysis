@@ -28,7 +28,7 @@ LANG_DICT = {
         "logic_ref": "逻辑参考",
         "prob_drop": "跌破概率(IV)",
         "prob_break": "突破概率(IV)",
-        "risk_level_title": "市场波动等级",
+        "risk_level_title": "实时波动强度",
         "current_price": "当前价",
         "vol_weekly": "周σ",
         "hist_support": "历史概率支撑",
@@ -61,7 +61,7 @@ LANG_DICT = {
         "logic_ref": "Logic",
         "prob_drop": "Prob. Drop(IV)",
         "prob_break": "Prob. Break(IV)",
-        "risk_level_title": "Market Vol Level",
+        "risk_level_title": "Real-time Vol Intensity",
         "current_price": "Price",
         "vol_weekly": "Weekly σ",
         "hist_support": "Hist. Support",
@@ -94,7 +94,7 @@ LANG_DICT = {
         "logic_ref": "根拠",
         "prob_drop": "下落確率(IV)",
         "prob_break": "上昇確率(IV)",
-        "risk_level_title": "市場ボラレベル",
+        "risk_level_title": "リアルタイムボラ強度",
         "current_price": "現在値",
         "vol_weekly": "週間σ",
         "hist_support": "歴史的サポート",
@@ -129,7 +129,8 @@ if app_mode == L["nav_vol"]:
         st.header(L["settings"])
         ticker_symbol = st.text_input("Ticker Symbol", value="TQQQ").upper()
         confidence_level = st.slider("Confidence Level (%)", 80, 99, 95)
-        sigma_multiplier = st.slider("Sigma Multiplier", 1.0, 4.0, 2.0, 0.1)
+        # 默认 sigma 将由 IV 强度自动推荐，但用户仍可手动调整
+        sigma_multiplier = st.slider("Manual Sigma Multiplier", 1.0, 4.0, 2.0, 0.1)
         lookback_period = st.selectbox("Lookback Period", ["1y", "2y", "5y", "10y", "max"], index=3)
         run_v = st.button(L["run_btn"], key="run_v")
 
@@ -140,18 +141,17 @@ if app_mode == L["nav_vol"]:
         if len(hist) < 20:
             st.error(L["data_error"])
         else:
-            # 基础数据准备
             current_price = hist['Close'].iloc[-1]
             weekly_resample = hist.resample('W-MON').agg({'Open': 'first', 'Close': 'last'}).dropna()
             weekly_returns = (weekly_resample['Close'] - weekly_resample['Open']) / weekly_resample['Open']
             std_dev = weekly_returns.std()
             mean_ret = weekly_returns.mean()
             
-            # 1. 核心波动率逻辑切换
+            # --- 核心波动率算法切换 ---
             iv = 0
             vol_source = "Historical"
 
-            # 针对 TQQQ 优先尝试 VXN
+            # 1. 针对 TQQQ 优先尝试 VXN
             if ticker_symbol == "TQQQ":
                 try:
                     vxn_data = yf.Ticker("^VXN").history(period="1d")
@@ -161,52 +161,62 @@ if app_mode == L["nav_vol"]:
                 except:
                     pass
 
-            # 如果不是 TQQQ，或 VXN 获取失败，则尝试实时隐含波动率 (IV)
+            # 2. 通用：尝试实时隐含波动率 (IV)
             if iv == 0:
                 try:
                     options = tq.options
                     if options:
                         opt_chain = tq.option_chain(options[0])
-                        # 获取最接近平价的 Put IV
                         calls_puts = opt_chain.puts
                         iv = calls_puts.iloc[(calls_puts['strike'] - current_price).abs().argsort()[:1]]['impliedVolatility'].iloc[0]
                         vol_source = "Real-time IV"
                 except:
                     iv = 0
 
-            # 如果上述都失败或返回0，使用历史波动率 (年化)
+            # 3. 保底：历史波动率 (HV)
             if iv == 0:
                 iv = std_dev * np.sqrt(52)
                 vol_source = "Historical Vol"
 
-            # 风险等级映射 (基于最终 IV 值反推一个参考点)
+            # --- 针对 IV% 重新设计的 Sigma 倍数建议逻辑 ---
             def get_risk_config(vol_val):
                 ref_v = vol_val * 100
-                if ref_v < 30: return "#2e7d32", "Safe", "低波动 / Low Vol"
-                if ref_v < 50: return "#fbc02d", "Caution", "标准波动 / Standard"
-                if ref_v < 70: return "#fb8c00", "Warning", "高波动 / High Vol"
-                return "#d32f2f", "CRISIS", "极高波动 / Extreme Vol"
+                if ref_v < 20: 
+                    return "#2e7d32", "Low Vol", 1.5, "极低波动：市场非常平稳 / Calm Market"
+                elif ref_v < 40: 
+                    return "#fbc02d", "Standard", 2.0, "标准波动：正常个股/ETF水平 / Normal Range"
+                elif ref_v < 70: 
+                    return "#fb8c00", "High Vol", 2.8, "高波动：杠杆ETF或剧烈震荡 / Aggressive Move"
+                else: 
+                    return "#d32f2f", "EXTREME", 3.5, "极端波动：高度恐慌或异常行情 / Crisis Mode"
 
-            bg_color, status_text, advice = get_risk_config(iv)
-            st.markdown(f"<div style='background-color:{bg_color};color:white;padding:15px;border-radius:8px;'><h2>{L['risk_level_title']}: {status_text} ({iv:.2%})</h2><p>Source: {vol_source} | {advice}</p></div>", unsafe_allow_html=True)
+            bg_color, status_text, auto_sigma, advice = get_risk_config(iv)
+            
+            # 提示用户当前使用的是自动推荐的 Sigma 还是手动 Sigma
+            effective_sigma = sigma_multiplier if "Manual Sigma Multiplier" in st.session_state else auto_sigma
+
+            st.markdown(f"""
+                <div style='background-color:{bg_color};color:white;padding:15px;border-radius:8px;'>
+                    <h2>{L['risk_level_title']}: {status_text} ({iv:.2%})</h2>
+                    <p><b>Source:</b> {vol_source} | <b>Recommended Sigma:</b> {auto_sigma} | <b>Advice:</b> {advice}</p>
+                </div>
+                """, unsafe_allow_html=True)
 
             # 绘图部分
             fig1, ax = plt.subplots(figsize=(12, 6))
             sns.histplot(weekly_returns, kde=True, bins=40, color="#8884d8", stat="density", alpha=0.3, ax=ax)
             lower_q, upper_q = weekly_returns.quantile([(100 - confidence_level) / 100, confidence_level / 100])
-            l_sigma, u_sigma = mean_ret - sigma_multiplier * std_dev, mean_ret + sigma_multiplier * std_dev
+            l_sigma, u_sigma = mean_ret - effective_sigma * std_dev, mean_ret + effective_sigma * std_dev
             for val, col in [(l_sigma, 'red'), (lower_q, 'green'), (upper_q, 'blue'), (u_sigma, 'red')]:
                 ax.axvline(val, color=col, linestyle='--', lw=2)
             st.pyplot(fig1)
 
-            # 概率计算逻辑
             def calc_prob(target_p, direction='down'):
-                t = 5 / 365 # 预测未来一周
+                t = 5 / 365
                 if iv <= 0: return 0.5
                 d2 = (np.log(current_price / target_p) + (- 0.5 * iv**2) * t) / (iv * np.sqrt(t))
                 return norm.cdf(-d2) if direction == 'down' else (1 - norm.cdf(-d2))
 
-            # ATR 支撑
             high_low = hist['High'] - hist['Low']
             true_range = np.maximum(high_low, np.abs(hist['High'] - hist['Close'].shift()))
             current_atr = true_range.rolling(14).mean().iloc[-1]
@@ -218,7 +228,7 @@ if app_mode == L["nav_vol"]:
             df_buy = pd.DataFrame([
                 [L["hist_support"], current_price * (1 + lower_q), f"{100-confidence_level}% {L['quantile_desc']}"],
                 [L["atr_support"], current_price - atr_buf, L["atr_desc"]],
-                [f"{sigma_multiplier}{L['sigma_support']}", current_price * (1 + l_sigma), f"{sigma_multiplier}{L['sigma_desc']}"]
+                [f"{effective_sigma}{L['sigma_support']}", current_price * (1 + l_sigma), f"{effective_sigma}{L['sigma_desc']}"]
             ], columns=[L["strategy"], L["suggested_price"], L["logic_ref"]])
             df_buy[L["prob_drop"]] = df_buy[L["suggested_price"]].apply(lambda x: f"{calc_prob(x, 'down'):.2%}")
             st.table(df_buy.style.format({L["suggested_price"]: "${:.2f}"}))
@@ -227,7 +237,7 @@ if app_mode == L["nav_vol"]:
             df_sell = pd.DataFrame([
                 [L["hist_resist"], current_price * (1 + upper_q), f"{confidence_level}% {L['quantile_desc']}"],
                 [L["atr_resist"], current_price + atr_buf, L["atr_desc"]],
-                [f"{sigma_multiplier}{L['sigma_resist']}", current_price * (1 + u_sigma), f"{sigma_multiplier}{L['sigma_desc']}"]
+                [f"{effective_sigma}{L['sigma_resist']}", current_price * (1 + u_sigma), f"{effective_sigma}{L['sigma_desc']}"]
             ], columns=[L["strategy"], L["suggested_price"], L["logic_ref"]])
             df_sell[L["prob_break"]] = df_sell[L["suggested_price"]].apply(lambda x: f"{calc_prob(x, 'up'):.2%}")
             st.table(df_sell.style.format({L["suggested_price"]: "${:.2f}"}))
