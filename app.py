@@ -1,4 +1,3 @@
-```python
 import streamlit as st
 import yfinance as yf
 import pandas as pd
@@ -289,5 +288,3 @@ elif app_mode == L["nav_idx"]:
             st.write(f"### 📊 {L['report_title']}")
             st.write(f"{L['new_low_trigger']}: {is_new_low.sum()}")
             st.write(f"{L['absolute_low_confirm']}: {len(confirmed_rebound_dates)}")
-
-```
