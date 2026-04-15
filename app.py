@@ -1,3 +1,4 @@
+```python
 import streamlit as st
 import yfinance as yf
 import pandas as pd
@@ -128,7 +129,6 @@ if app_mode == L["nav_vol"]:
     with st.sidebar:
         st.header(L["settings"])
         
-        # --- 修改部分：增加 SOXL 下拉及手动输入 ---
         ticker_options = ["TQQQ", "SOXL", "Custom"]
         selected_option = st.selectbox("Select Ticker", options=ticker_options, index=0)
         
@@ -136,7 +136,6 @@ if app_mode == L["nav_vol"]:
             ticker_symbol = st.text_input("Enter Custom Symbol", value="NVDA").upper()
         else:
             ticker_symbol = selected_option
-        # --- 修改结束 ---
 
         confidence_level = st.slider("Confidence Level (%)", 80, 99, 95)
         sigma_multiplier = st.slider("Manual Sigma Multiplier", 1.0, 4.0, 2.0, 0.1)
@@ -171,10 +170,10 @@ if app_mode == L["nav_vol"]:
             except:
                 iv = 0
 
-            # 2. 备选：历史波动率 (HV)
-            if iv == 0:
+            # 2. 备选及校验：如果 IV 缺失或低于 10% (通常为盘前错误数据)，使用历史波动率 (HV)
+            if iv < 0.10:
                 iv = std_dev * np.sqrt(52)
-                vol_source = "Historical Vol"
+                vol_source = "Historical Vol (Floor)" if iv > 0 else "Historical Vol"
 
             # --- 风险等级逻辑 ---
             def get_risk_config(vol_val):
@@ -238,7 +237,7 @@ if app_mode == L["nav_vol"]:
             df_sell[L["prob_break"]] = df_sell[L["suggested_price"]].apply(lambda x: f"{calc_prob(x, 'up'):.2%}")
             st.table(df_sell.style.format({L["suggested_price"]: "${:.2f}"}))
 
-# --- 4. 核心功能 B: 指数分析 (不修改任何相关逻辑) ---
+# --- 4. 核心功能 B: 指数分析 ---
 elif app_mode == L["nav_idx"]:
     st.title(f"📉 {L['nav_idx']}")
     symbol_map = {"纳斯达克100 (NDX)": "^NDX", "标普500 (S&P 500)": "^GSPC", "恒生指数 (HSI)": "^HSI", "沪深300 (CSI 300)": "000300.SS", "日经225 (Nikkei 225)": "^N225", "德国DAX (DAX)": "^GDAXI", "英国富时100 (FTSE 100)": "^FTSE", "韩国综合指数 (KOSPI)": "^KS11"}
@@ -290,3 +289,5 @@ elif app_mode == L["nav_idx"]:
             st.write(f"### 📊 {L['report_title']}")
             st.write(f"{L['new_low_trigger']}: {is_new_low.sum()}")
             st.write(f"{L['absolute_low_confirm']}: {len(confirmed_rebound_dates)}")
+
+```
