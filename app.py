@@ -25,7 +25,7 @@ LANG_DICT = {
         "conf_days": "设置确认天数",
         "start_date": "设置起始日期",
         "strategy": "策略方案",
-        "suggested_price": "下周建议位",
+        "suggested_price": "建议价位",
         "logic_ref": "逻辑参考",
         "prob_drop": "跌破概率",
         "prob_break": "突破概率",
@@ -106,17 +106,17 @@ if app_mode == L["nav_vol"]:
         confidence_level = st.slider("Confidence Level (%)", 80, 99, 95)
         sigma_multiplier = st.slider("Manual Sigma Multiplier", 1.0, 4.0, 2.0, 0.1)
         
-        # --- 计算周期逻辑更新 ---
-        weekday_now = datetime.now().weekday()  # 0是周一，4是周五
+        # 动态天数逻辑
+        weekday_now = datetime.now().weekday()
         default_days = max(1, 4 - weekday_now + 1) if weekday_now <= 4 else 7
-        calc_days = st.slider("Calculation Days (T)", 1, 10, default_days, help="到期天数：周一=5, 周二=4... 也可以根据资金占用设为7")
+        calc_days = st.slider("Calculation Days (T)", 1, 10, default_days)
 
-        lookback_period = st.selectbox("Lookback Period", ["1y", "2y", "5y", "max"], index=1)
+        lookback_period = st.selectbox("Lookback Period", ["1y", "2y", "5y", "10y", "max"], index=3) # 默认10年
         run_v = st.button(L["run_btn"], key="run_v")
 
     if run_v or ticker_symbol:
         tq = yf.Ticker(ticker_symbol)
-        hist = tq.history(period="2y")
+        hist = tq.history(period=lookback_period)
 
         if len(hist) < 30:
             st.error(L["data_error"])
@@ -127,16 +127,17 @@ if app_mode == L["nav_vol"]:
             delta = hist['Close'].diff()
             gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
             loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-            rs = gain / loss
-            rsi = 100 - (100 / (1 + rs))
+            rsi = 100 - (100 / (1 + (gain / loss)))
             current_rsi = rsi.iloc[-1]
 
-            # 波动率核心逻辑
+            # 收益率与波动率
             weekly_resample = hist.resample('W-MON').agg({'Open': 'first', 'Close': 'last'}).dropna()
             weekly_returns = (weekly_resample['Close'] - weekly_resample['Open']) / weekly_resample['Open']
             std_dev = weekly_returns.std()
+            mean_ret = weekly_returns.mean()
             hv_annual = std_dev * np.sqrt(52)
             
+            # 实时 IV 获取
             iv_realtime = 0
             try:
                 options = tq.options
@@ -147,60 +148,76 @@ if app_mode == L["nav_vol"]:
             except:
                 iv_realtime = 0
 
-            # 动态选择 IV/HV 较大值
+            # 最终计算波动率 (取 IV/HV 大值)
             final_vol = max(iv_realtime, hv_annual) if iv_realtime > 0.10 else hv_annual
             vol_source = f"混合 (IV:{iv_realtime:.1%} / HV:{hv_annual:.1%})" if iv_realtime > 0.10 else "纯历史"
 
-            # 风险状态
+            # 风险状态 UI
             def get_risk_config(rsi_val):
-                if rsi_val > 70: return "#d32f2f", "超买 (高风险)", "⚠️ 建议降低行权价"
-                elif rsi_val < 30: return "#1976d2", "超卖 (机会)", "✅ 适合卖出收高IV权利金"
-                else: return "#2e7d32", "正常区间", "ℹ️ 按模型建议操作"
+                if rsi_val > 70: return "#d32f2f", "超买 (回调风险高)", "⚠️ 建议使用更保守的行权价。"
+                elif rsi_val < 30: return "#1976d2", "超卖 (底部机会)", "✅ 适合卖出，权利金可能极其丰厚。"
+                else: return "#2e7d32", "正常区间", "ℹ️ 正常操作，关注 Sigma 支撑位。"
 
             bg_color, status_text, advice = get_risk_config(current_rsi)
 
-            # 可视化
-            st.subheader(f"📊 波动分析 (计算周期: {calc_days}天)")
-            v_col1, v_col2 = st.columns(2)
-            with v_col1:
-                fig_rsi, ax_rsi = plt.subplots(figsize=(10, 4))
-                ax_rsi.plot(rsi.tail(60).index, rsi.tail(60).values, color='#8884d8', lw=2)
-                ax_rsi.axhline(70, color='r', linestyle='--')
-                ax_rsi.axhline(30, color='g', linestyle='--')
-                ax_rsi.set_title(f"RSI: {current_rsi:.2f}")
-                st.pyplot(fig_rsi)
-            with v_col2:
-                fig_vol, ax_vol = plt.subplots(figsize=(10, 4))
+            # --- 图表区 ---
+            st.subheader("📈 综合市场分析")
+            col_chart1, col_chart2 = st.columns(2)
+            
+            with col_chart1:
+                # 重新找回的涨跌分布图
+                fig_dist, ax_dist = plt.subplots(figsize=(10, 5))
+                sns.histplot(weekly_returns, kde=True, bins=40, color="#8884d8", stat="density", alpha=0.3, ax=ax_dist)
+                lower_q, upper_q = weekly_returns.quantile([(100 - confidence_level) / 100, confidence_level / 100])
+                l_sigma_line, u_sigma_line = mean_ret - sigma_multiplier * std_dev, mean_ret + sigma_multiplier * std_dev
+                for val, col in [(l_sigma_line, 'red'), (lower_q, 'green'), (upper_q, 'blue'), (u_sigma_line, 'red')]:
+                    ax_dist.axvline(val, color=col, linestyle='--', lw=2)
+                ax_dist.set_title("Weekly Returns Distribution (KDE)")
+                st.pyplot(fig_dist)
+
+            with col_chart2:
+                # 强弱与波动率看板
+                fig_vol, ax_vol = plt.subplots(figsize=(10, 5))
                 ax_vol.bar(['Real-time IV', 'Historical HV'], [iv_realtime, hv_annual], color=['#bb86fc', '#03dac6'])
-                ax_vol.set_title(f"Vol Comparison (Final: {final_vol:.1%})")
+                ax_vol.set_title(f"Volatility Comparison (Final Used: {final_vol:.1%})")
                 st.pyplot(fig_vol)
 
             st.markdown(f"""
                 <div style='background-color:{bg_color};color:white;padding:15px;border-radius:8px;margin-bottom:20px;'>
-                    <h3>状态: {status_text} | 计算天数: {calc_days}d</h3>
-                    <p><b>建议逻辑:</b> {advice}</p>
+                    <h3>状态: {status_text} | RSI: {current_rsi:.2f} | 计算天数: {calc_days}d</h3>
+                    <p>建议: {advice}</p>
                 </div>
                 """, unsafe_allow_html=True)
 
-            # 概率计算 (基于动态 calc_days)
+            # --- 概率与建议表格 ---
             def calc_prob(target_p, direction='down'):
-                t = calc_days / 365 
+                t = calc_days / 365
                 if final_vol <= 0: return 0.5
                 d2 = (np.log(current_price / target_p) + (- 0.5 * final_vol**2) * t) / (final_vol * np.sqrt(t))
                 return norm.cdf(-d2) if direction == 'down' else (1 - norm.cdf(-d2))
 
-            # 价位建议
-            l_sigma = weekly_returns.mean() - sigma_multiplier * (final_vol / np.sqrt(52))
+            high_low = hist['High'] - hist['Low']
+            true_range = np.maximum(high_low, np.abs(hist['High'] - hist['Close'].shift()))
+            current_atr = true_range.rolling(14).mean().iloc[-1]
+            atr_buf = current_atr * np.sqrt(5) * 1.5
+
+            # 重新加回三种策略方案
+            l_sigma_val = mean_ret - sigma_multiplier * (final_vol / np.sqrt(52)) # 使用 final_vol 修正 Sigma
+
+            st.write(f"💎 {ticker_symbol} | {L['current_price']}: ${current_price:.2f} | 选定年化波动率: {final_vol:.2%}")
             
+            # 支撑表格
             df_buy = pd.DataFrame([
-                [f"{sigma_multiplier}σ {L['sigma_support']}", current_price * (1 + l_sigma), f"周期 {calc_days}天 | {vol_source}"]
+                [L["hist_support"], current_price * (1 + lower_q), f"{100-confidence_level}% {L['quantile_desc']}"],
+                [L["atr_support"], current_price - atr_buf, L["atr_desc"]],
+                [f"{sigma_multiplier}{L['sigma_support']}", current_price * (1 + l_sigma_val), f"基于 {vol_source}"]
             ], columns=[L["strategy"], L["suggested_price"], L["logic_ref"]])
             
             prob_col = f"{L['prob_drop']}({calc_days}d)"
             df_buy[prob_col] = df_buy[L["suggested_price"]].apply(lambda x: f"{calc_prob(x, 'down'):.2%}")
             st.table(df_buy.style.format({L["suggested_price"]: "${:.2f}"}))
 
-# --- 4. 核心功能 B: 指数新低分析 (不相关代码保持不变) ---
+# --- 4. 核心功能 B: 指数分析 (保持不相关代码不变) ---
 elif app_mode == L["nav_idx"]:
     st.title(f"📉 {L['nav_idx']}")
     symbol_map = {"纳斯达克100 (NDX)": "^NDX", "标普500 (S&P 500)": "^GSPC", "恒生指数 (HSI)": "^HSI", "沪深300 (CSI 300)": "000300.SS", "日经225 (Nikkei 225)": "^N225"}
@@ -238,8 +255,6 @@ elif app_mode == L["nav_idx"]:
                 ax1.axvline(x=date, color='#00FF00', linestyle='--', alpha=0.8, linewidth=1.5)
             low_points = close[is_new_low]
             if not low_points.empty:
-                ax1.scatter(low_points.index, low_points.values, color='red', s=15, label=f'{lookback_weeks}-Week New Low')
-            ax1.legend()
+                ax1.scatter(low_points.index, low_points.values, color='red', s=15)
             ax2.fill_between(close.index, (close / close.rolling(window_size).max() - 1) * 100, 0, color='red', alpha=0.3)
-            ax2.set_ylabel('Drawdown %')
             st.pyplot(fig2)
