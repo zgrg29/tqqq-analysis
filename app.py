@@ -200,26 +200,25 @@ if app_mode == L["nav_vol"]:
             true_range = np.maximum(high_low, np.abs(hist['High'] - hist['Close'].shift()))
             current_atr = true_range.rolling(14).mean().iloc[-1]
             
-            # 【动态修正点 1】：ATR 动态支撑根据计算天数 (calc_days) 进行平方根缩放
-            # 原公式固定乘开方5（1周），现在改为动态乘开方 calc_days
+            # ATR 动态支撑依据剩余天数缩放
             atr_buf = current_atr * np.sqrt(calc_days) * 1.5
 
-            # 【动态修正点 2】：历史概率支撑根据计算天数从“整周5天”转换为“T天”
-            # 转换公式：T天收益率 = 5天收益率 / sqrt(5) * sqrt(T)
+            # 历史概率支撑分位数转换为 T 天跨度
             dynamic_lower_q = (lower_q / np.sqrt(5)) * np.sqrt(calc_days)
 
-            # 【动态修正点 3】：Sigma 支撑位根据计算天数进行标准年化时间缩放
-            # 平均收益率按天线性缩放，标准差按时间开方缩放
-            t_annual = calc_days / 365
-            l_sigma_val = (mean_ret * (calc_days / 5)) - (sigma_multiplier * final_vol * np.sqrt(t_annual))
+            # 【完美修复点】：精准还原原版 Sigma 逻辑，仅对标准差部分按 T 天时间开方进行动态缩放
+            # 原版公式：l_sigma_val = mean_ret - sigma_multiplier * (final_vol / np.sqrt(52))
+            # 修复公式：将原本固定的周波动率，替换为随时间衰减的真实 T 天波动率
+            t_days_vol = final_vol * np.sqrt(calc_days / 365)
+            l_sigma_val = mean_ret - (sigma_multiplier * t_days_vol)
 
             st.write(f"💎 {ticker_symbol} | {L['current_price']}: ${current_price:.2f} | 选定年化波动率: {final_vol:.2%}")
             
-            # 支撑表格 (使用经过 calc_days 动态调整后的变量)
+            # 支撑表格 
             df_buy = pd.DataFrame([
                 [L["hist_support"], current_price * (1 + dynamic_lower_q), f"{100-confidence_level}% {L['quantile_desc']} (已按{calc_days}天调整)"],
                 [L["atr_support"], current_price - atr_buf, f"{L['atr_desc']} (已按{calc_days}天调整)"],
-                [f"{sigma_multiplier}{L['sigma_support']}", current_price + l_sigma_val if l_sigma_val < 0 else current_price * (1 + l_sigma_val), f"基于 {vol_source} (已按{calc_days}天调整)"]
+                [f"{sigma_multiplier}{L['sigma_support']}", current_price * (1 + l_sigma_val), f"基于 {vol_source} (已按{calc_days}天调整)"]
             ], columns=[L["strategy"], L["suggested_price"], L["logic_ref"]])
             
             prob_col = f"{L['prob_drop']}({calc_days}d)"
@@ -229,7 +228,7 @@ if app_mode == L["nav_vol"]:
 # --- 4. 核心功能 B: 指数分析 (完全保持不变) ---
 elif app_mode == L["nav_idx"]:
     st.title(f"📉 {L['nav_idx']}")
-    symbol_map = {"纳斯达克100 (NDX)": "^NDX", "标普500 (S&P 500)": "^GSPC", "恒生指数 (HSI)": "^HSI", "沪深300 (CSI 300)": "000300.SS", "日经225 (Nikkei 225)": "^N225"}
+    symbol_map = {"纳斯达克100 (NDX)": "^NDX", "标普500 (S&P 500)": "^GSPC", "恒生指数 (HSI)": "^HSI", "沪死300 (CSI 300)": "000300.SS", "日经225 (Nikkei 225)": "^N225"}
     with st.sidebar:
         st.header(L["idx_settings"])
         index_display_name = st.selectbox(L["select_idx"], list(symbol_map.keys()))
