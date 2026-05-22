@@ -165,7 +165,7 @@ if app_mode == L["nav_vol"]:
             col_chart1, col_chart2 = st.columns(2)
             
             with col_chart1:
-                # 重新找回的涨跌分布图
+                # 不改变画图部分代码
                 fig_dist, ax_dist = plt.subplots(figsize=(10, 5))
                 sns.histplot(weekly_returns, kde=True, bins=40, color="#8884d8", stat="density", alpha=0.3, ax=ax_dist)
                 lower_q, upper_q = weekly_returns.quantile([(100 - confidence_level) / 100, confidence_level / 100])
@@ -176,7 +176,7 @@ if app_mode == L["nav_vol"]:
                 st.pyplot(fig_dist)
 
             with col_chart2:
-                # 强弱与波动率看板
+                # 不改变画图部分代码
                 fig_vol, ax_vol = plt.subplots(figsize=(10, 5))
                 ax_vol.bar(['Real-time IV', 'Historical HV'], [iv_realtime, hv_annual], color=['#bb86fc', '#03dac6'])
                 ax_vol.set_title(f"Volatility Comparison (Final Used: {final_vol:.1%})")
@@ -199,25 +199,34 @@ if app_mode == L["nav_vol"]:
             high_low = hist['High'] - hist['Low']
             true_range = np.maximum(high_low, np.abs(hist['High'] - hist['Close'].shift()))
             current_atr = true_range.rolling(14).mean().iloc[-1]
-            atr_buf = current_atr * np.sqrt(5) * 1.5
+            
+            # 【动态修正点 1】：ATR 动态支撑根据计算天数 (calc_days) 进行平方根缩放
+            # 原公式固定乘开方5（1周），现在改为动态乘开方 calc_days
+            atr_buf = current_atr * np.sqrt(calc_days) * 1.5
 
-            # 重新加回三种策略方案
-            l_sigma_val = mean_ret - sigma_multiplier * (final_vol / np.sqrt(52)) # 使用 final_vol 修正 Sigma
+            # 【动态修正点 2】：历史概率支撑根据计算天数从“整周5天”转换为“T天”
+            # 转换公式：T天收益率 = 5天收益率 / sqrt(5) * sqrt(T)
+            dynamic_lower_q = (lower_q / np.sqrt(5)) * np.sqrt(calc_days)
+
+            # 【动态修正点 3】：Sigma 支撑位根据计算天数进行标准年化时间缩放
+            # 平均收益率按天线性缩放，标准差按时间开方缩放
+            t_annual = calc_days / 365
+            l_sigma_val = (mean_ret * (calc_days / 5)) - (sigma_multiplier * final_vol * np.sqrt(t_annual))
 
             st.write(f"💎 {ticker_symbol} | {L['current_price']}: ${current_price:.2f} | 选定年化波动率: {final_vol:.2%}")
             
-            # 支撑表格
+            # 支撑表格 (使用经过 calc_days 动态调整后的变量)
             df_buy = pd.DataFrame([
-                [L["hist_support"], current_price * (1 + lower_q), f"{100-confidence_level}% {L['quantile_desc']}"],
-                [L["atr_support"], current_price - atr_buf, L["atr_desc"]],
-                [f"{sigma_multiplier}{L['sigma_support']}", current_price * (1 + l_sigma_val), f"基于 {vol_source}"]
+                [L["hist_support"], current_price * (1 + dynamic_lower_q), f"{100-confidence_level}% {L['quantile_desc']} (已按{calc_days}天调整)"],
+                [L["atr_support"], current_price - atr_buf, f"{L['atr_desc']} (已按{calc_days}天调整)"],
+                [f"{sigma_multiplier}{L['sigma_support']}", current_price + l_sigma_val if l_sigma_val < 0 else current_price * (1 + l_sigma_val), f"基于 {vol_source} (已按{calc_days}天调整)"]
             ], columns=[L["strategy"], L["suggested_price"], L["logic_ref"]])
             
             prob_col = f"{L['prob_drop']}({calc_days}d)"
             df_buy[prob_col] = df_buy[L["suggested_price"]].apply(lambda x: f"{calc_prob(x, 'down'):.2%}")
             st.table(df_buy.style.format({L["suggested_price"]: "${:.2f}"}))
 
-# --- 4. 核心功能 B: 指数分析 (保持不相关代码不变) ---
+# --- 4. 核心功能 B: 指数分析 (完全保持不变) ---
 elif app_mode == L["nav_idx"]:
     st.title(f"📉 {L['nav_idx']}")
     symbol_map = {"纳斯达克100 (NDX)": "^NDX", "标普500 (S&P 500)": "^GSPC", "恒生指数 (HSI)": "^HSI", "沪深300 (CSI 300)": "000300.SS", "日经225 (Nikkei 225)": "^N225"}
