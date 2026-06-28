@@ -1,17 +1,3 @@
-为了实现你的需求，我们需要做以下几点修改：
- 1. **在参数设置（Settings）的侧边栏**中，增加一个滑块允许用户调整这个第四价位的设定概率（默认设为 5%）。
- 2. **在多语言配置中心（LANG_DICT）**中，为第四个策略添加对应的中英文翻译标签（如“自定义概率支撑”、“Custom Prob. Support”）。
- 3. **在策略计算逻辑中**，利用期权定价模型公式（反向计算 BSM 或正态分布下目标跌破概率对应的价格）来准确计算出“在指定天数内跌破概率为 X\%”时的股票价格。
- 4. **将计算出的第四个价位平滑地加入到 df_buy 表格中**，并且绝不改动其他无关的代码。
-由于反解跌破概率（即 P(\text{Price}_T \le K) = X\%）在数学上通常是基于资产价格对数正态分布。在代码现有的 calc_prob 框架下（基于 Black-Scholes 漂移项结构），跌破目标价 K 的概率公式为：
-d_2 = \frac{\ln(S_0 / K) + (-0.5 \cdot \sigma^2) \cdot T}{\sigma \cdot \sqrt{T}}
-\text{Prob} = \Phi(-d_2)
-因此，如果我们已知指定的跌破概率 \alpha（如 5%），则有：
--d_2 = \Phi^{-1}(\alpha) \implies d_2 = -\Phi^{-1}(\alpha)
-进而反解出目标价格 K：
-K = S_0 \cdot \exp\left( -d_2 \cdot \sigma \sqrt{T} - 0.5 \sigma^2 T \right) = S_0 \cdot \exp\left( \Phi^{-1}(\alpha) \cdot \sigma \sqrt{T} - 0.5 \sigma^2 T \right)
-下面是修改完成后的完整 Streamlit 代码：
-```python
 import streamlit as st
 import yfinance as yf
 import pandas as pd
@@ -295,5 +281,3 @@ elif app_mode == L["nav_idx"]:
                 ax1.scatter(low_points.index, low_points.values, color='red', s=15)
             ax2.fill_between(close.index, (close / close.rolling(window_size).max() - 1) * 100, 0, color='red', alpha=0.3)
             st.pyplot(fig2)
-
-```
