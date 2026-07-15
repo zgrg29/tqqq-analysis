@@ -108,15 +108,13 @@ if app_mode == L["nav_vol"]:
         confidence_level = st.slider("Confidence Level (%)", 80, 99, 95)
         sigma_multiplier = st.slider("Manual Sigma Multiplier", 1.0, 4.0, 2.0, 0.1)
         
-        # 新增：第四个价位的自定义跌破概率设定（默认5%）
         custom_prob_setting = st.slider("Target Downside Probability (%)", 1, 50, 5)
         
-        # 动态天数逻辑
         weekday_now = datetime.now().weekday()
         default_days = max(1, 4 - weekday_now + 1) if weekday_now <= 4 else 7
         calc_days = st.slider("Calculation Days (T)", 1, 10, default_days)
 
-        lookback_period = st.selectbox("Lookback Period", ["1y", "2y", "5y", "10y", "max"], index=3) # 默认10年
+        lookback_period = st.selectbox("Lookback Period", ["1y", "2y", "5y", "10y", "max"], index=3)
         run_v = st.button(L["run_btn"], key="run_v")
 
     if run_v or ticker_symbol:
@@ -128,21 +126,18 @@ if app_mode == L["nav_vol"]:
         else:
             current_price = hist['Close'].iloc[-1]
             
-            # RSI 计算
             delta = hist['Close'].diff()
             gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
             loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
             rsi = 100 - (100 / (1 + (gain / loss)))
             current_rsi = rsi.iloc[-1]
 
-            # 收益率与波动率
             weekly_resample = hist.resample('W-MON').agg({'Open': 'first', 'Close': 'last'}).dropna()
             weekly_returns = (weekly_resample['Close'] - weekly_resample['Open']) / weekly_resample['Open']
             std_dev = weekly_returns.std()
             mean_ret = weekly_returns.mean()
             hv_annual = std_dev * np.sqrt(52)
             
-            # 实时 IV 获取
             iv_realtime = 0
             try:
                 options = tq.options
@@ -153,11 +148,9 @@ if app_mode == L["nav_vol"]:
             except:
                 iv_realtime = 0
 
-            # 最终计算波动率 (取 IV/HV 大值)
             final_vol = max(iv_realtime, hv_annual) if iv_realtime > 0.10 else hv_annual
             vol_source = f"混合 (IV:{iv_realtime:.1%} / HV:{hv_annual:.1%})" if iv_realtime > 0.10 else "纯历史"
 
-            # 风险状态 UI
             def get_risk_config(rsi_val):
                 if rsi_val > 70: return "#d32f2f", "超买 (回调风险高)", "⚠️ 建议使用更保守的行权价。"
                 elif rsi_val < 30: return "#1976d2", "超卖 (底部机会)", "✅ 适合卖出，权利金可能极其丰厚。"
@@ -165,12 +158,10 @@ if app_mode == L["nav_vol"]:
 
             bg_color, status_text, advice = get_risk_config(current_rsi)
 
-            # --- 图表区 ---
             st.subheader("📈 综合市场分析")
             col_chart1, col_chart2 = st.columns(2)
             
             with col_chart1:
-                # 不改变画图部分代码
                 fig_dist, ax_dist = plt.subplots(figsize=(10, 5))
                 sns.histplot(weekly_returns, kde=True, bins=40, color="#8884d8", stat="density", alpha=0.3, ax=ax_dist)
                 lower_q, upper_q = weekly_returns.quantile([(100 - confidence_level) / 100, confidence_level / 100])
@@ -181,7 +172,6 @@ if app_mode == L["nav_vol"]:
                 st.pyplot(fig_dist)
 
             with col_chart2:
-                # 不改变画图部分代码
                 fig_vol, ax_vol = plt.subplots(figsize=(10, 5))
                 ax_vol.bar(['Real-time IV', 'Historical HV'], [iv_realtime, hv_annual], color=['#bb86fc', '#03dac6'])
                 ax_vol.set_title(f"Volatility Comparison (Final Used: {final_vol:.1%})")
@@ -194,7 +184,6 @@ if app_mode == L["nav_vol"]:
                 </div>
                 """, unsafe_allow_html=True)
 
-            # --- 概率与建议表格 ---
             def calc_prob(target_p, direction='down'):
                 t = calc_days / 365
                 if final_vol <= 0: return 0.5
@@ -204,23 +193,13 @@ if app_mode == L["nav_vol"]:
             high_low = hist['High'] - hist['Low']
             true_range = np.maximum(high_low, np.abs(hist['High'] - hist['Close'].shift()))
             current_atr = true_range.rolling(14).mean().iloc[-1]
-            
-            # ATR 动态支撑依据剩余天数缩放
             atr_buf = current_atr * np.sqrt(calc_days) * 1.5
-
-            # 历史概率支撑分位数转换为 T 天跨度
             dynamic_lower_q = (lower_q / np.sqrt(5)) * np.sqrt(calc_days)
-
-            # 【完美修复点】：精准还原原版 Sigma 逻辑，仅对标准差部分按 T 天时间开方进行动态缩放
-            # 原版公式：l_sigma_val = mean_ret - sigma_multiplier * (final_vol / np.sqrt(52))
-            # 修复公式：将原本固定的周波动率，替换为随时间衰减的真实 T 天波动率
             t_days_vol = final_vol * np.sqrt(calc_days / 365)
             l_sigma_val = mean_ret - (sigma_multiplier * t_days_vol)
 
-            # 新增：根据设定的特定跌破概率反解出对应的目标价格
             t_time = calc_days / 365
             if final_vol > 0 and custom_prob_setting > 0:
-                # norm.ppf 得到分位数点，根据 calc_prob 公式逆向求出对应的价格点
                 z_score = norm.ppf(custom_prob_setting / 100)
                 custom_prob_price = current_price * np.exp(z_score * final_vol * np.sqrt(t_time) - 0.5 * (final_vol**2) * t_time)
             else:
@@ -228,7 +207,6 @@ if app_mode == L["nav_vol"]:
 
             st.write(f"💎 {ticker_symbol} | {L['current_price']}: ${current_price:.2f} | 选定年化波动率: {final_vol:.2%}")
             
-            # 支撑表格 
             df_buy = pd.DataFrame([
                 [L["hist_support"], current_price * (1 + dynamic_lower_q), f"{100-confidence_level}% {L['quantile_desc']} (已按{calc_days}天调整)"],
                 [L["atr_support"], current_price - atr_buf, f"{L['atr_desc']} (已按{calc_days}天调整)"],
@@ -239,6 +217,40 @@ if app_mode == L["nav_vol"]:
             prob_col = f"{L['prob_drop']}({calc_days}d)"
             df_buy[prob_col] = df_buy[L["suggested_price"]].apply(lambda x: f"{calc_prob(x, 'down'):.2%}")
             st.table(df_buy.style.format({L["suggested_price"]: "${:.2f}"}))
+
+            # --- 新增：每日涨跌幅统计分析 ---
+            st.markdown("---")
+            st.subheader("📅 每日涨跌幅统计分析 (Daily Returns Analysis)")
+            
+            # 计算日收益率
+            daily_data = hist.copy()
+            daily_data['Return'] = daily_data['Close'].pct_change()
+            daily_data['Weekday'] = daily_data.index.dayofweek
+            daily_map = {0: 'Mon', 1: 'Tue', 2: 'Wed', 3: 'Thu', 4: 'Fri'}
+            daily_data['WeekdayName'] = daily_data['Weekday'].map(daily_map)
+            daily_clean = daily_data.dropna(subset=['Return'])
+
+            # 1. 平均涨跌幅表格
+            avg_returns = daily_clean.groupby('WeekdayName')['Return'].mean().reindex(['Mon', 'Tue', 'Wed', 'Thu', 'Fri'])
+            st.write("**平均日涨跌幅 (Average Daily Returns):**")
+            st.table(avg_returns.map('{:.2%}'.format))
+
+            # 2. 前五张图：每日 Histogram
+            cols = st.columns(5)
+            for i, day in enumerate(['Mon', 'Tue', 'Wed', 'Thu', 'Fri']):
+                with cols[i]:
+                    fig_h, ax_h = plt.subplots()
+                    data_day = daily_clean[daily_clean['WeekdayName'] == day]['Return']
+                    sns.histplot(data_day, ax=ax_h, kde=True, color='skyblue')
+                    ax_h.set_title(day)
+                    st.pyplot(fig_h)
+            
+            # 3. 第六张图：Boxplot
+            st.write("**每日涨跌幅分布 (Boxplot):**")
+            fig_b, ax_b = plt.subplots(figsize=(10, 4))
+            sns.boxplot(x='WeekdayName', y='Return', data=daily_clean, order=['Mon', 'Tue', 'Wed', 'Thu', 'Fri'], ax=ax_b)
+            ax_b.axhline(0, color='red', linestyle='--', alpha=0.5)
+            st.pyplot(fig_b)
 
 # --- 4. 核心功能 B: 指数分析 (完全保持不变) ---
 elif app_mode == L["nav_idx"]:
