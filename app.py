@@ -252,14 +252,19 @@ if app_mode == L["nav_vol"]:
             ax_b.axhline(0, color='red', linestyle='--', alpha=0.5)
             st.pyplot(fig_b)
 
-# --- 4. 核心功能 B: 指数分析 (完全保持不变) ---
+# --- 4. 核心功能 B: 指数分析 (已更新以支持自定义输入) ---
 elif app_mode == L["nav_idx"]:
     st.title(f"📉 {L['nav_idx']}")
-    symbol_map = {"纳斯达克100 (NDX)": "^NDX", "标普500 (S&P 500)": "^GSPC", "恒生指数 (HSI)": "^HSI", "沪死300 (CSI 300)": "000300.SS", "日经225 (Nikkei 225)": "^N225"}
+    symbol_map = {"纳斯达克100 (NDX)": "^NDX", "标普500 (S&P 500)": "^GSPC", "恒生指数 (HSI)": "^HSI", "沪死300 (CSI 300)": "000300.SS", "日经225 (Nikkei 225)": "^N225", "Custom": "Custom"}
     with st.sidebar:
         st.header(L["idx_settings"])
-        index_display_name = st.selectbox(L["select_idx"], list(symbol_map.keys()))
-        index_symbol = symbol_map[index_display_name]
+        index_choice = st.selectbox(L["select_idx"], list(symbol_map.keys()))
+        
+        if index_choice == "Custom":
+            index_symbol = st.text_input("Enter Custom Symbol", value="QQQ").upper()
+        else:
+            index_symbol = symbol_map[index_choice]
+            
         lookback_weeks = st.slider(L["back_weeks"], 1, 104, 26)
         confirm_days = st.slider(L["conf_days"], 1, 20, 5)
         start_date = st.text_input(L["start_date"], "2019-01-01")
