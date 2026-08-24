@@ -5,7 +5,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 from scipy.stats import norm
-from datetime import datetime, timedelta
+from datetime import datetime
 
 # --- 1. 全维度多语言配置中心 ---
 LANG_DICT = {
@@ -218,10 +218,11 @@ if app_mode == L["nav_vol"]:
             df_buy[prob_col] = df_buy[L["suggested_price"]].apply(lambda x: f"{calc_prob(x, 'down'):.2%}")
             st.table(df_buy.style.format({L["suggested_price"]: "${:.2f}"}))
 
-            # --- 每日涨跌幅统计分析 ---
+            # --- 新增：每日涨跌幅统计分析 ---
             st.markdown("---")
             st.subheader("📅 每日涨跌幅统计分析 (Daily Returns Analysis)")
             
+            # 计算日收益率
             daily_data = hist.copy()
             daily_data['Return'] = daily_data['Close'].pct_change()
             daily_data['Weekday'] = daily_data.index.dayofweek
@@ -229,10 +230,12 @@ if app_mode == L["nav_vol"]:
             daily_data['WeekdayName'] = daily_data['Weekday'].map(daily_map)
             daily_clean = daily_data.dropna(subset=['Return'])
 
+            # 1. 平均涨跌幅表格
             avg_returns = daily_clean.groupby('WeekdayName')['Return'].mean().reindex(['Mon', 'Tue', 'Wed', 'Thu', 'Fri'])
             st.write("**平均日涨跌幅 (Average Daily Returns):**")
             st.table(avg_returns.map('{:.2%}'.format))
 
+            # 2. 前五张图：每日 Histogram
             cols = st.columns(5)
             for i, day in enumerate(['Mon', 'Tue', 'Wed', 'Thu', 'Fri']):
                 with cols[i]:
@@ -242,33 +245,56 @@ if app_mode == L["nav_vol"]:
                     ax_h.set_title(day)
                     st.pyplot(fig_h)
             
+            # 3. 第六张图：Boxplot
             st.write("**每日涨跌幅分布 (Boxplot):**")
             fig_b, ax_b = plt.subplots(figsize=(10, 4))
             sns.boxplot(x='WeekdayName', y='Return', data=daily_clean, order=['Mon', 'Tue', 'Wed', 'Thu', 'Fri'], ax=ax_b)
             ax_b.axhline(0, color='red', linestyle='--', alpha=0.5)
             st.pyplot(fig_b)
 
-# --- 4. 核心功能 B: 指数分析 ---
+# --- 4. 核心功能 B: 指数分析 (已更新以支持自定义输入) ---
 elif app_mode == L["nav_idx"]:
     st.title(f"📉 {L['nav_idx']}")
-    
-    symbol_map = {
-        "纳斯达克100 (NDX)": "^NDX", 
-        "标普500 (S&P 500)": "^GSPC", 
-        "恒生指数 (HSI)": "^HSI", 
-        "沪深300 (CSI 300)": "000300.SS", 
-        "日经225 (Nikkei 225)": "^N225", 
-        "Custom": "Custom"
-    }
-    
+    symbol_map = {"纳斯达克100 (NDX)": "^NDX", "标普500 (S&P 500)": "^GSPC", "恒生指数 (HSI)": "^HSI", "沪死300 (CSI 300)": "000300.SS", "日经225 (Nikkei 225)": "^N225", "Custom": "Custom"}
     with st.sidebar:
         st.header(L["idx_settings"])
+        index_choice = st.selectbox(L["select_idx"], list(symbol_map.keys()))
         
-        # wire.ax 快捷按钮：点击后将回溯设为4周，确认天数设为1天，并将起始日期设为一年前
-        if st.button("wire.ax"):
-            st.session_state.select_idx_widget = "Custom"
-            st.session_state.text_sym_widget = "wire.ax"
-            st.session_state.slider_weeks_widget = 4
-            st.session_state.slider_days_widget = 1
-            st.session_state.start_date_widget = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
-            st.rerun()
+        if index_choice == "Custom":
+            index_symbol = st.text_input("Enter Custom Symbol", value="QQQ").upper()
+        else:
+            index_symbol = symbol_map[index_choice]
+            
+        lookback_weeks = st.slider(L["back_weeks"], 1, 104, 26)
+        confirm_days = st.slider(L["conf_days"], 1, 20, 5)
+        start_date = st.text_input(L["start_date"], "2019-01-01")
+        run_idx = st.button(L["run_btn"], key="run_idx")
+
+    if run_idx:
+        window_size = lookback_weeks * 5
+        df = yf.download(index_symbol, start=start_date)
+        if not df.empty:
+            close = df['Close'].squeeze().tz_localize(None)
+            rolling_min = close.shift(1).rolling(window=window_size).min()
+            is_new_low = close < rolling_min
+            confirmed_rebound_dates = []
+            new_low_dates = close[is_new_low].index
+            for low_date in new_low_dates:
+                try:
+                    current_idx = close.index.get_loc(low_date)
+                    target_idx = current_idx + confirm_days
+                    if target_idx < len(close):
+                        price_at_low = close.iloc[current_idx]
+                        if (close.iloc[current_idx + 1 : target_idx + 1] >= price_at_low).all() and close.iloc[target_idx] > price_at_low:
+                            confirmed_rebound_dates.append(close.index[target_idx])
+                except: continue
+
+            fig2, (ax1, ax2) = plt.subplots(2, 1, figsize=(16, 10), sharex=True, gridspec_kw={'height_ratios': [3, 1]})
+            ax1.plot(close.index, close.values, label='Price', color='#1f77b4', alpha=0.4)
+            for i, date in enumerate(confirmed_rebound_dates):
+                ax1.axvline(x=date, color='#00FF00', linestyle='--', alpha=0.8, linewidth=1.5)
+            low_points = close[is_new_low]
+            if not low_points.empty:
+                ax1.scatter(low_points.index, low_points.values, color='red', s=15)
+            ax2.fill_between(close.index, (close / close.rolling(window_size).max() - 1) * 100, 0, color='red', alpha=0.3)
+            st.pyplot(fig2)
