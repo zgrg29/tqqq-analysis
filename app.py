@@ -252,16 +252,6 @@ if app_mode == L["nav_vol"]:
 elif app_mode == L["nav_idx"]:
     st.title(f"📉 {L['nav_idx']}")
     
-    # 初始化 session_state
-    if "idx_choice" not in st.session_state:
-        st.session_state.idx_choice = "纳斯达克100 (NDX)"
-    if "custom_sym" not in st.session_state:
-        st.session_state.custom_sym = "QQQ"
-    if "lookback_w" not in st.session_state:
-        st.session_state.lookback_w = 26
-    if "conf_d" not in st.session_state:
-        st.session_state.conf_d = 5
-
     symbol_map = {
         "纳斯达克100 (NDX)": "^NDX", 
         "标普500 (S&P 500)": "^GSPC", 
@@ -274,31 +264,26 @@ elif app_mode == L["nav_idx"]:
     with st.sidebar:
         st.header(L["idx_settings"])
         
-        # wire.ax 快捷按钮
+        # wire.ax 快捷按钮：同时覆盖组件对应的 session_state 缓存
         if st.button("wire.ax"):
-            st.session_state.idx_choice = "Custom"
-            st.session_state.custom_sym = "wire.ax"
-            st.session_state.lookback_w = 4
-            st.session_state.conf_d = 1
+            st.session_state.select_idx_widget = "Custom"
+            st.session_state.text_sym_widget = "wire.ax"
+            st.session_state.slider_weeks_widget = 4
+            st.session_state.slider_days_widget = 1
             st.rerun()
 
         index_keys = list(symbol_map.keys())
-        current_idx_pos = index_keys.index(st.session_state.idx_choice) if st.session_state.idx_choice in index_keys else 0
 
-        index_choice = st.selectbox(L["select_idx"], index_keys, index=current_idx_pos, key="select_idx_widget")
-        st.session_state.idx_choice = index_choice
+        index_choice = st.selectbox(L["select_idx"], index_keys, key="select_idx_widget")
         
         if index_choice == "Custom":
-            index_symbol = st.text_input("Enter Custom Symbol", value=st.session_state.custom_sym, key="text_sym_widget")
-            st.session_state.custom_sym = index_symbol
+            index_symbol = st.text_input("Enter Custom Symbol", key="text_sym_widget").upper()
         else:
             index_symbol = symbol_map[index_choice]
             
-        lookback_weeks = st.slider(L["back_weeks"], 1, 104, value=st.session_state.lookback_w, key="slider_weeks_widget")
-        st.session_state.lookback_w = lookback_weeks
+        lookback_weeks = st.slider(L["back_weeks"], 1, 104, key="slider_weeks_widget")
         
-        confirm_days = st.slider(L["conf_days"], 1, 20, value=st.session_state.conf_d, key="slider_days_widget")
-        st.session_state.conf_d = confirm_days
+        confirm_days = st.slider(L["conf_days"], 1, 20, key="slider_days_widget")
         
         start_date = st.text_input(L["start_date"], "2019-01-01")
         run_idx = st.button(L["run_btn"], key="run_idx")
