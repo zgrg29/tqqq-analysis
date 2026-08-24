@@ -218,11 +218,10 @@ if app_mode == L["nav_vol"]:
             df_buy[prob_col] = df_buy[L["suggested_price"]].apply(lambda x: f"{calc_prob(x, 'down'):.2%}")
             st.table(df_buy.style.format({L["suggested_price"]: "${:.2f}"}))
 
-            # --- 新增：每日涨跌幅统计分析 ---
+            # --- 每日涨跌幅统计分析 ---
             st.markdown("---")
             st.subheader("📅 每日涨跌幅统计分析 (Daily Returns Analysis)")
             
-            # 计算日收益率
             daily_data = hist.copy()
             daily_data['Return'] = daily_data['Close'].pct_change()
             daily_data['Weekday'] = daily_data.index.dayofweek
@@ -230,12 +229,10 @@ if app_mode == L["nav_vol"]:
             daily_data['WeekdayName'] = daily_data['Weekday'].map(daily_map)
             daily_clean = daily_data.dropna(subset=['Return'])
 
-            # 1. 平均涨跌幅表格
             avg_returns = daily_clean.groupby('WeekdayName')['Return'].mean().reindex(['Mon', 'Tue', 'Wed', 'Thu', 'Fri'])
             st.write("**平均日涨跌幅 (Average Daily Returns):**")
             st.table(avg_returns.map('{:.2%}'.format))
 
-            # 2. 前五张图：每日 Histogram
             cols = st.columns(5)
             for i, day in enumerate(['Mon', 'Tue', 'Wed', 'Thu', 'Fri']):
                 with cols[i]:
@@ -245,28 +242,65 @@ if app_mode == L["nav_vol"]:
                     ax_h.set_title(day)
                     st.pyplot(fig_h)
             
-            # 3. 第六张图：Boxplot
             st.write("**每日涨跌幅分布 (Boxplot):**")
             fig_b, ax_b = plt.subplots(figsize=(10, 4))
             sns.boxplot(x='WeekdayName', y='Return', data=daily_clean, order=['Mon', 'Tue', 'Wed', 'Thu', 'Fri'], ax=ax_b)
             ax_b.axhline(0, color='red', linestyle='--', alpha=0.5)
             st.pyplot(fig_b)
 
-# --- 4. 核心功能 B: 指数分析 (已更新以支持自定义输入) ---
+# --- 4. 核心功能 B: 指数分析 ---
 elif app_mode == L["nav_idx"]:
     st.title(f"📉 {L['nav_idx']}")
-    symbol_map = {"纳斯达克100 (NDX)": "^NDX", "标普500 (S&P 500)": "^GSPC", "恒生指数 (HSI)": "^HSI", "沪死300 (CSI 300)": "000300.SS", "日经225 (Nikkei 225)": "^N225", "Custom": "Custom"}
+    
+    # 用 session_state 记录用户点击快捷按钮带来的状态改变
+    if "idx_choice_state" not in st.session_state:
+        st.session_state.idx_choice_state = "纳斯达克100 (NDX)"
+    if "custom_symbol_state" not in st.session_state:
+        st.session_state.custom_symbol_state = "QQQ"
+    if "lookback_weeks_state" not in st.session_state:
+        st.session_state.lookback_weeks_state = 26
+    if "confirm_days_state" not in st.session_state:
+        st.session_state.confirm_days_state = 5
+
+    symbol_map = {
+        "纳斯达克100 (NDX)": "^NDX", 
+        "标普500 (S&P 500)": "^GSPC", 
+        "恒生指数 (HSI)": "^HSI", 
+        "沪深300 (CSI 300)": "000300.SS", 
+        "日经225 (Nikkei 225)": "^N225", 
+        "Custom": "Custom"
+    }
+    
     with st.sidebar:
         st.header(L["idx_settings"])
-        index_choice = st.selectbox(L["select_idx"], list(symbol_map.keys()))
+        
+        # 快捷按钮 wire.ax
+        if st.button("wire.ax", help="一键应用 wire.ax 自定义参数配置"):
+            st.session_state.idx_choice_state = "Custom"
+            st.session_state.custom_symbol_state = "wire.ax"
+            st.session_state.lookback_weeks_state = 4
+            st.session_state.confirm_days_state = 1
+            st.rerun()
+
+        # 下拉菜单绑定 session_state
+        current_index_keys = list(symbol_map.keys())
+        default_choice_idx = current_index_keys.index(st.session_state.idx_choice_state) if st.session_state.idx_choice_state in current_index_keys else 0
+        
+        index_choice = st.selectbox(L["select_idx"], current_index_keys, index=default_choice_idx, key="idx_choice_selectbox")
+        st.session_state.idx_choice_state = index_choice
         
         if index_choice == "Custom":
-            index_symbol = st.text_input("Enter Custom Symbol", value="QQQ").upper()
+            index_symbol = st.text_input("Enter Custom Symbol", value=st.session_state.custom_symbol_state, key="custom_symbol_input")
+            st.session_state.custom_symbol_state = index_symbol
         else:
             index_symbol = symbol_map[index_choice]
             
-        lookback_weeks = st.slider(L["back_weeks"], 1, 104, 26)
-        confirm_days = st.slider(L["conf_days"], 1, 20, 5)
+        lookback_weeks = st.slider(L["back_weeks"], 1, 104, value=st.session_state.lookback_weeks_state, key="lookback_weeks_slider")
+        st.session_state.lookback_weeks_state = lookback_weeks
+        
+        confirm_days = st.slider(L["conf_days"], 1, 20, value=st.session_state.confirm_days_state, key="confirm_days_slider")
+        st.session_state.confirm_days_state = confirm_days
+        
         start_date = st.text_input(L["start_date"], "2019-01-01")
         run_idx = st.button(L["run_btn"], key="run_idx")
 
