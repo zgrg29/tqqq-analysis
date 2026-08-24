@@ -5,7 +5,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 from scipy.stats import norm
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # --- 1. 全维度多语言配置中心 ---
 LANG_DICT = {
@@ -264,55 +264,12 @@ elif app_mode == L["nav_idx"]:
     with st.sidebar:
         st.header(L["idx_settings"])
         
-        # wire.ax 快捷按钮：同时覆盖组件对应的 session_state 缓存
+        # wire.ax 快捷按钮：点击后将回溯设为4周，确认天数设为1天，并将起始日期设为一年前
+```python
         if st.button("wire.ax"):
             st.session_state.select_idx_widget = "Custom"
             st.session_state.text_sym_widget = "wire.ax"
             st.session_state.slider_weeks_widget = 4
             st.session_state.slider_days_widget = 1
+            st.session_state.start_date_widget = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
             st.rerun()
-
-        index_keys = list(symbol_map.keys())
-
-        index_choice = st.selectbox(L["select_idx"], index_keys, key="select_idx_widget")
-        
-        if index_choice == "Custom":
-            index_symbol = st.text_input("Enter Custom Symbol", key="text_sym_widget").upper()
-        else:
-            index_symbol = symbol_map[index_choice]
-            
-        lookback_weeks = st.slider(L["back_weeks"], 1, 104, key="slider_weeks_widget")
-        
-        confirm_days = st.slider(L["conf_days"], 1, 20, key="slider_days_widget")
-        
-        start_date = st.text_input(L["start_date"], "2019-01-01")
-        run_idx = st.button(L["run_btn"], key="run_idx")
-
-    if run_idx:
-        window_size = lookback_weeks * 5
-        df = yf.download(index_symbol, start=start_date)
-        if not df.empty:
-            close = df['Close'].squeeze().tz_localize(None)
-            rolling_min = close.shift(1).rolling(window=window_size).min()
-            is_new_low = close < rolling_min
-            confirmed_rebound_dates = []
-            new_low_dates = close[is_new_low].index
-            for low_date in new_low_dates:
-                try:
-                    current_idx = close.index.get_loc(low_date)
-                    target_idx = current_idx + confirm_days
-                    if target_idx < len(close):
-                        price_at_low = close.iloc[current_idx]
-                        if (close.iloc[current_idx + 1 : target_idx + 1] >= price_at_low).all() and close.iloc[target_idx] > price_at_low:
-                            confirmed_rebound_dates.append(close.index[target_idx])
-                except: continue
-
-            fig2, (ax1, ax2) = plt.subplots(2, 1, figsize=(16, 10), sharex=True, gridspec_kw={'height_ratios': [3, 1]})
-            ax1.plot(close.index, close.values, label='Price', color='#1f77b4', alpha=0.4)
-            for i, date in enumerate(confirmed_rebound_dates):
-                ax1.axvline(x=date, color='#00FF00', linestyle='--', alpha=0.8, linewidth=1.5)
-            low_points = close[is_new_low]
-            if not low_points.empty:
-                ax1.scatter(low_points.index, low_points.values, color='red', s=15)
-            ax2.fill_between(close.index, (close / close.rolling(window_size).max() - 1) * 100, 0, color='red', alpha=0.3)
-            st.pyplot(fig2)
