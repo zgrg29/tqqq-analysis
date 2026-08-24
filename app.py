@@ -265,7 +265,6 @@ elif app_mode == L["nav_idx"]:
         st.header(L["idx_settings"])
         
         # wire.ax 快捷按钮：点击后将回溯设为4周，确认天数设为1天，并将起始日期设为一年前
-```python
         if st.button("wire.ax"):
             st.session_state.select_idx_widget = "Custom"
             st.session_state.text_sym_widget = "wire.ax"
